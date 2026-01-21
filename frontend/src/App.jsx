@@ -147,20 +147,8 @@ function App() {
     setSpend(null);
   };
 
-  // Автоматичне завантаження дат кліка після отримання даних
-  useEffect(() => {
-    if (data && data.rows && data.rows.length > 0) {
-      data.rows.forEach((row) => {
-        if (row.sub_id) {
-          handleClickDatetime(row.sub_id);
-        }
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
-
   const handleClickDatetime = async (subId) => {
-    // Перевірка, щоб не завантажувати повторно, якщо вже є дані або йде завантаження
+    // Prevent duplicate loading if data is already loaded or currently loading
     if (clickData[subId]?.datetime || clickData[subId]?.loading) {
       return;
     }
@@ -381,7 +369,13 @@ function App() {
                               {clickInfo.error}
                             </span>
                           ) : (
-                            <span>-</span>
+                            <button
+                              type="button"
+                              className="btn btn-link"
+                              onClick={() => handleClickDatetime(row.sub_id)}
+                            >
+                              узнать
+                            </button>
                           )}
                         </td>
                       </tr>
