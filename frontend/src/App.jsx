@@ -20,7 +20,15 @@ function App() {
         }
       })
       .then(response => {
-        setUser(JSON.parse(savedUser));
+        // Update user data from verify response (includes campaignGroupId for users)
+        const verifiedUser = response.data.user;
+        const savedUserData = JSON.parse(savedUser);
+        const userData = {
+          ...savedUserData,
+          ...verifiedUser // Override with verified data
+        };
+        localStorage.setItem('user', JSON.stringify(userData));
+        setUser(userData);
         axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       })
       .catch(() => {

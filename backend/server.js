@@ -9,6 +9,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcrypt';
 import cookieParser from 'cookie-parser';
+import { getUserByLogin, getAllUsers, createUser, deleteUser, verifyUserPassword } from './database.js';
 
 dotenv.config();
 
@@ -161,6 +162,15 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Middleware to check if user is admin
+const requireAdmin = (req, res, next) => {
+  if (req.user && req.user.role === 'admin') {
+    next();
+  } else {
+    res.status(403).json({ error: 'Admin access required' });
+  }
+};
+
 // Validate domain to prevent SSRF attacks
 const validateDomain = (domain) => {
   if (!domain || typeof domain !== 'string') {
@@ -224,67 +234,109 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check username first (constant time comparison)
-    if (sanitizedUsername !== ADMIN_CREDENTIALS.username) {
+    let user = null;
+    let role = null;
+    let campaignGroupId = null;
+
+    // Check if it's admin
+    if (sanitizedUsername === ADMIN_CREDENTIALS.username) {
+      // Verify password hash is initialized
+      if (!ADMIN_PASSWORD_HASH) {
+        console.error('Password hash not initialized on server');
+        return res.status(500).json({ error: 'Server configuration error' });
+      }
+
+      // Verify password with bcrypt (prevents timing attacks)
+      let passwordMatch = false;
+      try {
+        passwordMatch = await bcrypt.compare(sanitizedPassword, ADMIN_PASSWORD_HASH);
+      } catch (bcryptError) {
+        console.error('Bcrypt compare error:', bcryptError.name);
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+
+      if (passwordMatch) {
+        user = { username: ADMIN_CREDENTIALS.username };
+        role = 'admin';
+      }
+    } else {
+      // Check if it's a regular user
+      const verifiedUser = await verifyUserPassword(sanitizedUsername, sanitizedPassword);
+      if (verifiedUser) {
+        user = { username: verifiedUser.login, id: verifiedUser.id };
+        role = 'user';
+        campaignGroupId = verifiedUser.campaign_group_id;
+      }
+    }
+
+    if (!user) {
       // Use same delay to prevent timing attacks
       await bcrypt.compare('dummy', '$2b$10$dummy');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Verify password with bcrypt (prevents timing attacks)
-    if (!ADMIN_PASSWORD_HASH) {
-      // Don't log details for security
-      return res.status(500).json({ error: 'Server configuration error' });
+    // Generate JWT token
+    let token;
+    try {
+      const tokenPayload = {
+        username: user.username,
+        role: role,
+        iat: Math.floor(Date.now() / 1000)
+      };
+      
+      if (campaignGroupId) {
+        tokenPayload.campaignGroupId = campaignGroupId;
+      }
+
+      token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    } catch (jwtError) {
+      console.error('JWT sign error:', jwtError.name);
+      return res.status(500).json({ error: 'Internal server error' });
     }
 
-    const passwordMatch = await bcrypt.compare(sanitizedPassword, ADMIN_PASSWORD_HASH);
-    
-    if (passwordMatch) {
-      const token = jwt.sign(
-        { 
-          username: ADMIN_CREDENTIALS.username,
-          role: 'admin',
-          iat: Math.floor(Date.now() / 1000)
-        },
-        JWT_SECRET,
-        { expiresIn: JWT_EXPIRES_IN }
-      );
+    // Set secure cookie as additional protection (HttpOnly, Secure, SameSite)
+    // secure: false to allow HTTP connections (change to true when using HTTPS)
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: false, // Set to true when using HTTPS
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    });
 
-      // Set secure cookie as additional protection (HttpOnly, Secure, SameSite)
-      // secure: false to allow HTTP connections (change to true when using HTTPS)
-      res.cookie('auth_token', token, {
-        httpOnly: true,
-        secure: false, // Set to true when using HTTPS
-        sameSite: 'strict',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-      });
+    const responseData = {
+      token,
+      user: {
+        username: user.username,
+        role: role
+      }
+    };
 
-      return res.json({
-        token,
-        user: {
-          username: ADMIN_CREDENTIALS.username,
-          role: 'admin'
-        }
-      });
+    if (campaignGroupId) {
+      responseData.user.campaignGroupId = campaignGroupId;
     }
 
-    res.status(401).json({ error: 'Invalid credentials' });
+    return res.json(responseData);
   } catch (error) {
     // Don't log error details to avoid exposing sensitive data
     // Log only error type without message
-    if (error.name) {
-      console.error('Login request failed:', error.name);
-    } else {
-      console.error('Login request failed');
-    }
+    console.error('Login request failed:', error.name || 'Unknown error');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Verify token endpoint
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
+  const userData = {
+    username: req.user.username,
+    role: req.user.role
+  };
+  
+  if (req.user.campaignGroupId) {
+    userData.campaignGroupId = req.user.campaignGroupId;
+  }
+  
   res.json({
-    user: req.user
+    user: userData
   });
 });
 
@@ -296,6 +348,79 @@ app.post('/api/auth/logout', (req, res) => {
     sameSite: 'strict'
   });
   res.json({ message: 'Logged out successfully' });
+});
+
+// Users management endpoints (admin only)
+app.get('/api/users', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const users = getAllUsers();
+    res.json({ users });
+  } catch (error) {
+    console.error('Error fetching users:', error.name || 'Unknown error');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { login, password, campaignGroupId } = req.body;
+
+    if (!login || !password || !campaignGroupId) {
+      return res.status(400).json({ error: 'Login, password and campaign group ID are required' });
+    }
+
+    // Sanitize and validate input
+    const sanitizedLogin = sanitizeInput(login);
+    const sanitizedPassword = sanitizeInput(password);
+    const sanitizedCampaignGroupId = sanitizeInput(campaignGroupId);
+
+    if (!validateInput(sanitizedLogin, sanitizedPassword)) {
+      return res.status(400).json({ error: 'Invalid login or password format' });
+    }
+
+    // Validate campaign group ID is numeric
+    if (!/^\d+$/.test(sanitizedCampaignGroupId)) {
+      return res.status(400).json({ error: 'Campaign Group ID must be numeric' });
+    }
+
+    const newUser = await createUser(sanitizedLogin, sanitizedPassword, sanitizedCampaignGroupId);
+    
+    res.status(201).json({
+      message: 'User created successfully',
+      user: {
+        id: newUser.id,
+        login: newUser.login,
+        campaign_group_id: newUser.campaign_group_id
+      }
+    });
+  } catch (error) {
+    if (error.message === 'User with this login already exists') {
+      return res.status(409).json({ error: error.message });
+    }
+    console.error('Error creating user:', error.name || 'Unknown error');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/users/:id', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const userId = parseInt(req.params.id);
+    
+    if (isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
+    const deleted = deleteUser(userId);
+    
+    if (deleted) {
+      res.json({ message: 'User deleted successfully' });
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error deleting user:', error.name || 'Unknown error');
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.post('/api/conversions/log', authenticateToken, async (req, res) => {

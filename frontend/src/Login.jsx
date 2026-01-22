@@ -27,8 +27,9 @@ function Login({ onLogin }) {
 
       if (response.data.token) {
         localStorage.setItem('token', response.data.token);
-        localStorage.setItem('user', JSON.stringify(response.data.user));
-        onLogin(response.data.user);
+        const userData = response.data.user;
+        localStorage.setItem('user', JSON.stringify(userData));
+        onLogin(userData);
       }
     } catch (err) {
       // Improved error handling

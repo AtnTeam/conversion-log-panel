@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
+import Users from './Users';
 
 function Panel({ user, onLogout }) {
+  const [activeTab, setActiveTab] = useState('conversions');
   const [filters, setFilters] = useState({
     campaignGroupId: '',
     status: 'sale',
@@ -41,6 +43,16 @@ function Panel({ user, onLogout }) {
       axios.interceptors.response.eject(interceptor);
     };
   }, [onLogout]);
+
+  // Auto-fill Campaign Group ID for regular users
+  useEffect(() => {
+    if (user && user.role === 'user' && user.campaignGroupId) {
+      setFilters(prev => ({
+        ...prev,
+        campaignGroupId: user.campaignGroupId
+      }));
+    }
+  }, [user]);
 
   const handleInputChange = (field, value) => {
     setFilters(prev => ({
@@ -261,6 +273,8 @@ function Panel({ user, onLogout }) {
 
   const isSubmitDisabled = loading || !filters.campaignGroupId.trim() || !filters.from || !filters.to;
 
+  const isAdmin = user?.role === 'admin';
+
   return (
     <div className="container">
       <div className="header">
@@ -276,7 +290,6 @@ function Panel({ user, onLogout }) {
             <button 
               onClick={onLogout}
               className="btn btn-secondary"
-              style={{ padding: '8px 16px', fontSize: '14px' }}
             >
               Выйти
             </button>
@@ -284,23 +297,47 @@ function Panel({ user, onLogout }) {
         </div>
       </div>
 
+      {isAdmin && (
+        <div className="tabs">
+          <button
+            onClick={() => setActiveTab('conversions')}
+            className={`tab-button ${activeTab === 'conversions' ? 'active' : ''}`}
+          >
+            Conversion Log
+          </button>
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`tab-button ${activeTab === 'users' ? 'active' : ''}`}
+          >
+            Пользователи
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'users' && isAdmin ? (
+        <Users user={user} />
+      ) : (
+        <>
+
       <form className="filters" onSubmit={handleSubmit}>
         <h2>Фильтры</h2>
         
         <div className="filter-group">
-          <div className="filter-item">
-            <label htmlFor="campaignGroupId">Campaign Group ID:</label>
-            <input
-              id="campaignGroupId"
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={filters.campaignGroupId}
-              onChange={(e) => handleInputChange('campaignGroupId', e.target.value.replace(/\D/g, ''))}
-              placeholder="Введите ID группы кампаний"
-              required
-            />
-          </div>
+          {isAdmin && (
+            <div className="filter-item">
+              <label htmlFor="campaignGroupId">Campaign Group ID:</label>
+              <input
+                id="campaignGroupId"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={filters.campaignGroupId}
+                onChange={(e) => handleInputChange('campaignGroupId', e.target.value.replace(/\D/g, ''))}
+                placeholder="Введите ID группы кампаний"
+                required
+              />
+            </div>
+          )}
 
           <div className="filter-item">
             <label htmlFor="from">Date From:</label>
@@ -341,7 +378,7 @@ function Panel({ user, onLogout }) {
 
       {error && (
         <div className="error">
-          Ошибка: {error}
+          {error}
         </div>
       )}
 
@@ -440,6 +477,8 @@ function Panel({ user, onLogout }) {
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );
