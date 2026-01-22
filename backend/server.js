@@ -32,23 +32,20 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD_PLAIN = process.env.ADMIN_PASSWORD;
 
 // Hash admin password synchronously for immediate availability
+// Використовуємо тільки синхронний метод для гарантії, що хеш буде готовий
 let ADMIN_PASSWORD_HASH = null;
-if (ADMIN_PASSWORD_PLAIN) {
-  // Use sync version for startup, or await in async context
-  bcrypt.hash(ADMIN_PASSWORD_PLAIN, 10, (err, hash) => {
-    if (err) {
-      console.error('Error hashing admin password:', err);
-    } else {
-      ADMIN_PASSWORD_HASH = hash;
-      console.log('Admin password hashed successfully');
-    }
-  });
-  // Fallback: hash synchronously if async fails
-  try {
-    ADMIN_PASSWORD_HASH = bcrypt.hashSync(ADMIN_PASSWORD_PLAIN, 10);
-  } catch (err) {
-    console.error('Error hashing admin password synchronously:', err);
-  }
+try {
+  ADMIN_PASSWORD_HASH = bcrypt.hashSync(ADMIN_PASSWORD_PLAIN, 10);
+  // Не логуємо успішне хешування для безпеки
+} catch (err) {
+  // Логуємо тільки помилку без чутливих даних
+  console.error('Failed to initialize password hash');
+  throw new Error('Failed to hash admin password. Server cannot start.');
+}
+
+// Перевірка, що хеш успішно створено
+if (!ADMIN_PASSWORD_HASH) {
+  throw new Error('Admin password hash is null. Server cannot start.');
 }
 
 const ADMIN_CREDENTIALS = {
@@ -236,7 +233,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
     // Verify password with bcrypt (prevents timing attacks)
     if (!ADMIN_PASSWORD_HASH) {
-      console.error('Admin password hash not initialized');
+      // Не логуємо деталі для безпеки
       return res.status(500).json({ error: 'Server configuration error' });
     }
 
@@ -273,7 +270,13 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
     res.status(401).json({ error: 'Invalid credentials' });
   } catch (error) {
-    console.error('Login error:', error.message);
+    // Не логуємо деталі помилки, щоб не розкрити чутливі дані
+    // Логуємо тільки тип помилки без повідомлення
+    if (error.name) {
+      console.error('Login request failed:', error.name);
+    } else {
+      console.error('Login request failed');
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -355,7 +358,8 @@ app.post('/api/conversions/log', authenticateToken, async (req, res) => {
 
     res.json(response.data);
   } catch (error) {
-    console.error('Error fetching conversions:', error.message);
+    // Логуємо тільки тип помилки без деталей для безпеки
+    console.error('Error fetching conversions:', error.response?.status || 'Unknown error');
     // Don't expose internal error details to client
     const statusCode = error.response?.status || 500;
     const errorMessage = statusCode === 500 
@@ -416,7 +420,8 @@ app.post('/api/clicks/log', authenticateToken, async (req, res) => {
 
     res.json(response.data);
   } catch (error) {
-    console.error('Error fetching clicks:', error.message);
+    // Логуємо тільки тип помилки без деталей для безпеки
+    console.error('Error fetching clicks:', error.response?.status || 'Unknown error');
     // Don't expose internal error details to client
     const statusCode = error.response?.status || 500;
     const errorMessage = statusCode === 500 
@@ -480,7 +485,8 @@ app.post('/api/report/build', authenticateToken, async (req, res) => {
 
     res.json(response.data);
   } catch (error) {
-    console.error('Error fetching report:', error.message);
+    // Логуємо тільки тип помилки без деталей для безпеки
+    console.error('Error fetching report:', error.response?.status || 'Unknown error');
     // Don't expose internal error details to client
     const statusCode = error.response?.status || 500;
     const errorMessage = statusCode === 500 
