@@ -5,8 +5,16 @@
   border: none;
   padding: 0;
   margin: 0;
-  color: #007bff;
+  color: #3182ce;
   cursor: pointer;
   font: inherit;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.btn-link:hover {
+  color: #2c5aa0;
   text-decoration: underline;
 }

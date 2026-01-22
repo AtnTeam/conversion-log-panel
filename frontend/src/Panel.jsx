@@ -283,8 +283,8 @@ function Panel({ user, onLogout }) {
             <h1>Conversion Log Panel</h1>
             <p>Панель для отображения логов конверсий из Keitaro</p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <span style={{ color: '#666', fontSize: '14px' }}>
+          <div className="user-info">
+            <span>
               {user?.username} ({user?.role})
             </span>
             <button 
