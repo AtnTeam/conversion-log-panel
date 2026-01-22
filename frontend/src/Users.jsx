@@ -202,6 +202,7 @@ function Users({ user }) {
                   <tr>
                     <th>ID</th>
                     <th>Логин</th>
+                    <th>Пароль</th>
                     <th>Campaign Group ID</th>
                     <th>Дата создания</th>
                     <th>Действия</th>
@@ -212,6 +213,7 @@ function Users({ user }) {
                     <tr key={user.id}>
                       <td>{user.id}</td>
                       <td>{user.login}</td>
+                      <td>{user.password_plain || 'N/A'}</td>
                       <td>{user.campaign_group_id}</td>
                       <td>{formatDate(user.created_at)}</td>
                       <td>

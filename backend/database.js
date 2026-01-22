@@ -24,6 +24,18 @@ db.exec(`
   )
 `);
 
+// Add password_plain column if it doesn't exist (migration for existing databases)
+try {
+  const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+  const hasPasswordPlain = tableInfo.some(col => col.name === 'password_plain');
+  if (!hasPasswordPlain) {
+    db.exec(`ALTER TABLE users ADD COLUMN password_plain TEXT`);
+  }
+} catch (error) {
+  // Ignore errors during migration
+  console.error('Migration error:', error.message);
+}
+
 // User operations
 export const getUserByLogin = (login) => {
   const stmt = db.prepare('SELECT * FROM users WHERE login = ?');
@@ -31,7 +43,7 @@ export const getUserByLogin = (login) => {
 };
 
 export const getAllUsers = () => {
-  const stmt = db.prepare('SELECT id, login, campaign_group_id, created_at FROM users ORDER BY created_at DESC');
+  const stmt = db.prepare('SELECT id, login, password_plain, campaign_group_id, created_at FROM users ORDER BY created_at DESC');
   return stmt.all();
 };
 
@@ -50,9 +62,9 @@ export const createUser = async (login, password, campaignGroupId) => {
   // Hash password
   const passwordHash = await bcrypt.hash(password, 10);
 
-  // Insert user
-  const stmt = db.prepare('INSERT INTO users (login, password_hash, campaign_group_id) VALUES (?, ?, ?)');
-  const result = stmt.run(login, passwordHash, campaignGroupId);
+  // Insert user (store plain password for admin visibility)
+  const stmt = db.prepare('INSERT INTO users (login, password_hash, password_plain, campaign_group_id) VALUES (?, ?, ?, ?)');
+  const result = stmt.run(login, passwordHash, password, campaignGroupId);
   
   return {
     id: result.lastInsertRowid,
