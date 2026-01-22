@@ -32,18 +32,18 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD_PLAIN = process.env.ADMIN_PASSWORD;
 
 // Hash admin password synchronously for immediate availability
-// Використовуємо тільки синхронний метод для гарантії, що хеш буде готовий
+// Use only synchronous method to ensure hash is ready before first request
 let ADMIN_PASSWORD_HASH = null;
 try {
   ADMIN_PASSWORD_HASH = bcrypt.hashSync(ADMIN_PASSWORD_PLAIN, 10);
-  // Не логуємо успішне хешування для безпеки
+  // Don't log successful hashing for security
 } catch (err) {
-  // Логуємо тільки помилку без чутливих даних
+  // Log only error without sensitive data
   console.error('Failed to initialize password hash');
   throw new Error('Failed to hash admin password. Server cannot start.');
 }
 
-// Перевірка, що хеш успішно створено
+// Verify that hash was successfully created
 if (!ADMIN_PASSWORD_HASH) {
   throw new Error('Admin password hash is null. Server cannot start.');
 }
@@ -233,7 +233,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
     // Verify password with bcrypt (prevents timing attacks)
     if (!ADMIN_PASSWORD_HASH) {
-      // Не логуємо деталі для безпеки
+      // Don't log details for security
       return res.status(500).json({ error: 'Server configuration error' });
     }
 
@@ -270,8 +270,8 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
     res.status(401).json({ error: 'Invalid credentials' });
   } catch (error) {
-    // Не логуємо деталі помилки, щоб не розкрити чутливі дані
-    // Логуємо тільки тип помилки без повідомлення
+    // Don't log error details to avoid exposing sensitive data
+    // Log only error type without message
     if (error.name) {
       console.error('Login request failed:', error.name);
     } else {
@@ -358,7 +358,7 @@ app.post('/api/conversions/log', authenticateToken, async (req, res) => {
 
     res.json(response.data);
   } catch (error) {
-    // Логуємо тільки тип помилки без деталей для безпеки
+    // Log only error type without details for security
     console.error('Error fetching conversions:', error.response?.status || 'Unknown error');
     // Don't expose internal error details to client
     const statusCode = error.response?.status || 500;
@@ -420,7 +420,7 @@ app.post('/api/clicks/log', authenticateToken, async (req, res) => {
 
     res.json(response.data);
   } catch (error) {
-    // Логуємо тільки тип помилки без деталей для безпеки
+    // Log only error type without details for security
     console.error('Error fetching clicks:', error.response?.status || 'Unknown error');
     // Don't expose internal error details to client
     const statusCode = error.response?.status || 500;
@@ -485,7 +485,7 @@ app.post('/api/report/build', authenticateToken, async (req, res) => {
 
     res.json(response.data);
   } catch (error) {
-    // Логуємо тільки тип помилки без деталей для безпеки
+    // Log only error type without details for security
     console.error('Error fetching report:', error.response?.status || 'Unknown error');
     // Don't expose internal error details to client
     const statusCode = error.response?.status || 500;

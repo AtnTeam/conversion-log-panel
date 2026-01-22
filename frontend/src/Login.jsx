@@ -31,7 +31,15 @@ function Login({ onLogin }) {
         onLogin(response.data.user);
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Ошибка авторизации');
+      // Improved error handling
+      const errorMessage = err.response?.data?.error || err.message || 'Ошибка авторизации';
+      setError(errorMessage);
+      // Log only error status without details for security
+      if (err.response) {
+        console.error('Login request failed with status:', err.response.status);
+      } else {
+        console.error('Login request failed: Network error');
+      }
     } finally {
       setLoading(false);
     }
@@ -54,6 +62,7 @@ function Login({ onLogin }) {
               placeholder="Введите логин"
               disabled={loading}
               autoFocus
+              autoComplete="username"
             />
           </div>
 
@@ -66,6 +75,7 @@ function Login({ onLogin }) {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Введите пароль"
               disabled={loading}
+              autoComplete="current-password"
             />
           </div>
 
