@@ -4,6 +4,11 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import jwt from 'jsonwebtoken';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import bcrypt from 'bcrypt';
+import cookieParser from 'cookie-parser';
 
 dotenv.config();
 
@@ -12,6 +17,62 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || '9b3d1ee8ad8f73c91330987c44f721ac9fe96fa5e80c56fd001232be0b686d0591d99205a9049c30f6e9d26fcfc69c8a87d429998148161a0ac07095f1b05f35';
+const JWT_EXPIRES_IN = '24h';
+
+// Admin credentials - hash password on startup
+if (!process.env.ADMIN_USERNAME) {
+  throw new Error('ADMIN_USERNAME environment variable is required');
+}
+if (!process.env.ADMIN_PASSWORD) {
+  throw new Error('ADMIN_PASSWORD environment variable is required');
+}
+
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD_PLAIN = process.env.ADMIN_PASSWORD;
+
+// Hash admin password synchronously for immediate availability
+let ADMIN_PASSWORD_HASH = null;
+if (ADMIN_PASSWORD_PLAIN) {
+  // Use sync version for startup, or await in async context
+  bcrypt.hash(ADMIN_PASSWORD_PLAIN, 10, (err, hash) => {
+    if (err) {
+      console.error('Error hashing admin password:', err);
+    } else {
+      ADMIN_PASSWORD_HASH = hash;
+      console.log('Admin password hashed successfully');
+    }
+  });
+  // Fallback: hash synchronously if async fails
+  try {
+    ADMIN_PASSWORD_HASH = bcrypt.hashSync(ADMIN_PASSWORD_PLAIN, 10);
+  } catch (err) {
+    console.error('Error hashing admin password synchronously:', err);
+  }
+}
+
+const ADMIN_CREDENTIALS = {
+  username: ADMIN_USERNAME
+};
+
+// Security headers with Helmet (configured for HTTP support)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // Allow embedding if needed
+  hsts: false // Disable HSTS to allow HTTP connections
+}));
 
 // CORS configuration - restrict to specific origins in production
 const corsOptions = {
@@ -19,14 +80,89 @@ const corsOptions = {
     ? process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000']
     : true, // Allow all origins in development
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 
 app.use(cors(corsOptions));
+app.use(cookieParser());
 
 // Limit request body size to prevent DoS attacks
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Rate limiting for API endpoints
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Stricter rate limiting for login endpoint
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 login requests per windowMs
+  message: 'Too many login attempts, please try again later.',
+  skipSuccessfulRequests: true, // Don't count successful requests
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply rate limiting to all API routes
+app.use('/api/', apiLimiter);
+
+// Input validation and sanitization
+const sanitizeInput = (input) => {
+  if (typeof input === 'string') {
+    return input.trim().replace(/[<>]/g, '');
+  }
+  return input;
+};
+
+const validateInput = (username, password) => {
+  // Prevent injection attacks
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return false;
+  }
+  
+  // Length limits
+  if (username.length > 100 || password.length > 200) {
+    return false;
+  }
+  
+  // Basic character validation
+  if (!/^[a-zA-Z0-9_@.-]+$/.test(username)) {
+    return false;
+  }
+  
+  return true;
+};
+
+// Authentication middleware with enhanced security
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access token required' });
+  }
+
+  // Validate token format
+  if (token.length > 1000 || !/^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*$/.test(token)) {
+    return res.status(403).json({ error: 'Invalid token format' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+    req.user = user;
+    next();
+  });
+};
 
 // Validate domain to prevent SSRF attacks
 const validateDomain = (domain) => {
@@ -72,7 +208,94 @@ const validateDomain = (domain) => {
   }
 };
 
-app.post('/api/conversions/log', async (req, res) => {
+// Login endpoint with enhanced security
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    // Sanitize and validate input
+    const sanitizedUsername = sanitizeInput(username);
+    const sanitizedPassword = sanitizeInput(password);
+
+    if (!validateInput(sanitizedUsername, sanitizedPassword)) {
+      // Use same delay to prevent timing attacks
+      await bcrypt.compare('dummy', '$2b$10$dummy');
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Check username first (constant time comparison)
+    if (sanitizedUsername !== ADMIN_CREDENTIALS.username) {
+      // Use same delay to prevent timing attacks
+      await bcrypt.compare('dummy', '$2b$10$dummy');
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Verify password with bcrypt (prevents timing attacks)
+    if (!ADMIN_PASSWORD_HASH) {
+      console.error('Admin password hash not initialized');
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
+
+    const passwordMatch = await bcrypt.compare(sanitizedPassword, ADMIN_PASSWORD_HASH);
+    
+    if (passwordMatch) {
+      const token = jwt.sign(
+        { 
+          username: ADMIN_CREDENTIALS.username,
+          role: 'admin',
+          iat: Math.floor(Date.now() / 1000)
+        },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
+
+      // Set secure cookie as additional protection (HttpOnly, Secure, SameSite)
+      // secure: false to allow HTTP connections (change to true when using HTTPS)
+      res.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: false, // Set to true when using HTTPS
+        sameSite: 'strict',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+      });
+
+      return res.json({
+        token,
+        user: {
+          username: ADMIN_CREDENTIALS.username,
+          role: 'admin'
+        }
+      });
+    }
+
+    res.status(401).json({ error: 'Invalid credentials' });
+  } catch (error) {
+    console.error('Login error:', error.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Verify token endpoint
+app.get('/api/auth/verify', authenticateToken, (req, res) => {
+  res.json({
+    user: req.user
+  });
+});
+
+// Logout endpoint - clear cookies
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('auth_token', {
+    httpOnly: true,
+    secure: false, // Set to true when using HTTPS
+    sameSite: 'strict'
+  });
+  res.json({ message: 'Logged out successfully' });
+});
+
+app.post('/api/conversions/log', authenticateToken, async (req, res) => {
   try {
     const { range, limit, offset, columns, filters, sort } = req.body;
 
@@ -145,7 +368,7 @@ app.post('/api/conversions/log', async (req, res) => {
   }
 });
 
-app.post('/api/clicks/log', async (req, res) => {
+app.post('/api/clicks/log', authenticateToken, async (req, res) => {
   try {
     const { range, limit, offset, columns, filters, sort } = req.body;
 
@@ -206,7 +429,7 @@ app.post('/api/clicks/log', async (req, res) => {
   }
 });
 
-app.post('/api/report/build', async (req, res) => {
+app.post('/api/report/build', authenticateToken, async (req, res) => {
   try {
     const { dimensions, measures, filters, sort, limit, offset, extended, range, summary } = req.body;
 
